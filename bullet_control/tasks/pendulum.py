@@ -1,6 +1,9 @@
 import numpy as np
-from .core import Task
+from ..core import Task, Environment
 from .. import physics
+import pybullet_data
+import tempfile
+import os
 
 
 class Physics(physics.Physics):
@@ -62,3 +65,24 @@ class PendulumTask(Task):
 
     def get_termination(self, physics):
         pass
+
+
+def change_length(l=0.6):
+    """Create a Pendulum with different length for the pole."""
+    import xml.etree.ElementTree as ET
+    original = os.path.join(pybullet_data.getDataPath(), 'mjcf', 'inverted_pendulum.xml')
+    tree = ET.parse(original)
+
+    for geom in tree.iter('geom'):
+        if geom.attrib.get('name') and geom.attrib['name'] == 'cpole':
+            geom.set('fromto', '0 0 0 0.001 0 {}'.format(l))
+
+    physics = Physics()
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, 'output.xml')
+        tree.write(path)
+        physics.load_MJCF(path)
+
+    task = PendulumTask(swingup=True)
+    env = Environment(physics, task)
+    return env
