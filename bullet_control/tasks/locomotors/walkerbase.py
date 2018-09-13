@@ -4,7 +4,12 @@ from bullet_control import physics
 
 
 class Physics(physics.Physics):
+    def __init__(self, foot_list):
+        self.foot_list = foot_list
+        super(Physics, self).__init__()
+
     def _bind(self, bullet_client, bodies):
+        super(Physics, self)._bind(bullet_client, bodies)
         self.feet = [self.parts[f] for f in self.foot_list]
 
 
@@ -12,7 +17,7 @@ class WalkerBase(Task):
     def __init__(self, fn, robot_name, action_dim, obs_dim, power):
         # MJCFBasedRobot.__init__(self, fn, robot_name, action_dim, obs_dim)
         self.fn = fn
-
+        self.np_random = np.random.RandomState(42)
         self.robot_name = robot_name
         self.action_dim = action_dim
         self.obs_dim = obs_dim
@@ -30,7 +35,7 @@ class WalkerBase(Task):
 
         self.feet = [physics.parts[f] for f in physics.foot_list]
         self.feet_contact = np.array([0.0 for f in physics.foot_list], dtype=np.float32)
-        self.scene.actor_introduce(self)
+        # self.scene.actor_introduce(self)
         self.initial_z = None
 
     def action_spec(self):
@@ -41,7 +46,7 @@ class WalkerBase(Task):
 
     def step(self, action, physics):
         assert (np.isfinite(action).all())
-        for n, j in enumerate(action.ordered_joints):
+        for n, j in enumerate(physics.ordered_joints):
             j.set_motor_torque(self.power * j.power_coef * float(np.clip(action[n], -1, +1)))
 
     def get_observation(self, physics):

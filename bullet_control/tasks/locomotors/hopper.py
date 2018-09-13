@@ -3,17 +3,23 @@ import pybullet
 import os
 import pybullet_data
 from bullet_control import physics, core
-from .walkerbase import WalkerBase
+from bullet_control.core import Environment
+from bullet_control.tasks.locomotors.walkerbase import WalkerBase, Physics
 
-
+def run():
+    ant = Hopper()
+    physics = Physics(ant.foot_list)
+    physics.load_MJCF('hopper.xml')
+    return Environment(physics, ant)
 
 class Hopper(WalkerBase):
+    foot_list = ["foot"]
     def __init__(self):
         WalkerBase.__init__(self, "hopper.xml", "torso", action_dim=3, obs_dim=15, power=0.75)
 
-    def apply_action(self, a):
+    def step(self, a, physics):
         assert (np.isfinite(a).all())
-        for n, j in enumerate(self.ordered_joints):
+        for n, j in enumerate(physics.ordered_joints):
             j.set_motor_torque(self.power * j.power_coef * float(np.clip(a[n], -1, +1)))
 
     def get_observation(self, physics):
@@ -80,3 +86,9 @@ class Hopper(WalkerBase):
         return +1 if z > 0.8 and abs(pitch) < 1.0 else -1
 
 
+
+
+if __name__ == '__main__':
+    env = run()
+    while True:
+        env.step(np.random.randn(env.task.action_spec())*0.001)

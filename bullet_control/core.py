@@ -36,7 +36,8 @@ class Environment(object):
         self.task = task
 
     def step(self, action):
-        return self.task.step(action, self.physics)
+        self.task.step(action, self.physics)
+        self.physics._p.stepSimulation()
 
     def reset(self):
         return self.task.on_reset(self.physics)

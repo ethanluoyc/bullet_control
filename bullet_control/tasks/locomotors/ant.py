@@ -1,4 +1,12 @@
-from .walkerbase import WalkerBase
+from bullet_control.tasks.locomotors.walkerbase import WalkerBase, Physics
+from bullet_control.core import Environment
+import numpy as np
+
+def run():
+    ant = Ant()
+    physics = Physics(ant.foot_list)
+    physics.load_MJCF('ant.xml')
+    return Environment(physics, ant)
 
 
 class Ant(WalkerBase):
@@ -9,3 +17,10 @@ class Ant(WalkerBase):
 
     def alive_bonus(self, z, pitch):
         return +1 if z > 0.26 else -1  # 0.25 is central sphere rad, die if it scrapes the ground
+
+
+if __name__ == '__main__':
+    env = run()
+    env.reset()
+    while True:
+        env.step(np.random.randn(env.task.action_spec())*0.01)

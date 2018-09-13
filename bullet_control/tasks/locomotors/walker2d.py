@@ -1,5 +1,13 @@
+from bullet_control.core import Environment
+from bullet_control.physics import Physics
 from .walkerbase import WalkerBase
 
+
+def run():
+    ant = Walker2D()
+    physics = Physics(ant.foot_list)
+    physics.load_MJCF('walker2d.xml')
+    return Environment(physics, ant)
 
 class Walker2D(WalkerBase):
     foot_list = ["foot", "foot_left"]
@@ -13,4 +21,5 @@ class Walker2D(WalkerBase):
     def on_reset(self, physics):
         WalkerBase.on_reset(self, physics)
         for n in ["foot_joint", "foot_left_joint"]:
-            self.jdict[n].power_coef = 30.0
+            physics.jdict[n].power_coef = 30.0
+

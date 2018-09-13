@@ -1,7 +1,16 @@
-from .walkerbase import WalkerBase
+from bullet_control.core import Environment
+from bullet_control.tasks.locomotors.walkerbase import WalkerBase, Physics
 import numpy as np
 import pybullet_data
 import os
+from bullet_control.physics import BodyPart
+
+
+def run():
+    ant = Humanoid()
+    physics = Physics(ant.foot_list)
+    physics.load_MJCF('ant.xml')
+    return Environment(physics, ant)
 
 
 class Humanoid(WalkerBase):
@@ -32,7 +41,7 @@ class Humanoid(WalkerBase):
             orientation = [0, 0, 0]
             yaw = self.np_random.uniform(low=-3.14, high=3.14)
             if self.random_lean and self.np_random.randint(2) == 0:
-                cpose.set_xyz(0, 0, 1.4)
+                # cpose.set_xyz(0, 0, 1.4) # TODO
                 if self.np_random.randint(2) == 0:
                     pitch = np.pi / 2
                     position = [0, 0, 0.45]
@@ -88,7 +97,7 @@ class HumanoidFlagrun(Humanoid):
         Humanoid.on_reset(self, physics)
         self.flag_reposition()
 
-    def flag_reposition(self):
+    def flag_reposition(self, physics):
         self.walk_target_x = self.np_random.uniform(low=-self.scene.stadium_halflen,
                                                     high=+self.scene.stadium_halflen)
         self.walk_target_y = self.np_random.uniform(low=-self.scene.stadium_halfwidth,
@@ -101,11 +110,12 @@ class HumanoidFlagrun(Humanoid):
             # for b in self.flag.bodies:
             #	print("remove body uid",b)
             #	p.removeBody(b)
-            self._p.resetBasePositionAndOrientation(self.flag.bodies[0],
-                                                    [self.walk_target_x, self.walk_target_y, 0.7],
-                                                    [0, 0, 0, 1])
+            physics._p.resetBasePositionAndOrientation(self.flag.bodies[0],
+                                                       [self.walk_target_x, self.walk_target_y,
+                                                        0.7],
+                                                       [0, 0, 0, 1])
         else:
-            self.flag = get_sphere(self._p, self.walk_target_x, self.walk_target_y, 0.7)
+            self.flag = get_sphere(physics._p, self.walk_target_x, self.walk_target_y, 0.7)
         self.flag_timeout = 600 / self.scene.frame_skip  # match Roboschool
 
     def calc_state(self):
@@ -130,8 +140,9 @@ class HumanoidFlagrunHarder(HumanoidFlagrun):
 
         self.frame = 0
         if (self.aggressive_cube):
-            self._p.resetBasePositionAndOrientation(self.aggressive_cube.bodies[0], [-1.5, 0, 0.05],
-                                                    [0, 0, 0, 1])
+            physics._p.resetBasePositionAndOrientation(self.aggressive_cube.bodies[0],
+                                                       [-1.5, 0, 0.05],
+                                                       [0, 0, 0, 1])
         else:
             self.aggressive_cube = get_cube(self._p, -1.5, 0, 0.05)
         self.on_ground_frame_counter = 0
@@ -193,3 +204,9 @@ class HumanoidFlagrunHarder(HumanoidFlagrun):
             self.crawl_start_potential = None
 
         return flag_running_progress + self.potential_leak() * 100
+
+if __name__ == '__main__':
+    env = run()
+
+    while True:
+        pass
