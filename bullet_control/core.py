@@ -6,14 +6,7 @@ from dm_env import specs
 
 
 class Physics:
-    def __init__(self):
-        self._p = None
-
-    def close(self):
-        del self._p
-
-    def step(self):
-        self._p.stepSimulation()
+    pass
 
 
 class Task(metaclass=abc.ABCMeta):
@@ -68,9 +61,8 @@ class Environment:
         self._reset_next_step = True
 
     def reset(self) -> dm_env.TimeStep:
-        # self.physics._p.resetSimulation()
         self._reset_next_step = False
-        self.physics._p.setPhysicsEngineParameter(deterministicOverlappingPairs=1)
+        self.physics.reset()
         self.task.initialize_episode(self.physics)
         observation = self.task.get_observation(self.physics)
         return dm_env.TimeStep(

@@ -1,9 +1,8 @@
 import dm_env
 import numpy as np
 from absl.testing import absltest, parameterized
-from dm_env import test_utils
-
 from bullet_control.tasks import pendulum
+from dm_env import test_utils
 
 
 def uniform_random_policy(action_spec, random=None):
@@ -42,15 +41,14 @@ class TaskTest(parameterized.TestCase):
             "First: {}\nSecond: {}".format(obs1, obs2),
         )
 
-    @absltest.skip("TODO: reset does not reset all states")
     def test_deterministic_state_with_same_seed(self):
         env1 = pendulum.swingup(random=42)
-        env2 = pendulum.swingup(random=24)
+        env2 = pendulum.swingup(random=42)
         obs1 = env1.reset().observation
         obs2 = env2.reset().observation
         self.assertTrue(
             np.allclose(obs1, obs2),
-            "Two consecutive initial states have identical observations.\n"
+            "First reset with identical seeds should have identical observations.\n"
             "First: {}\nSecond: {}".format(obs1, obs2),
         )
 

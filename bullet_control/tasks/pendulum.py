@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 import xml.etree.ElementTree as ET
@@ -5,24 +6,190 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pybullet
 import pybullet_data
-from bullet_control import core
-from bullet_control import physics as p
+from dm_control.utils import containers
 from dm_env import specs
+from pybullet_envs.robot_bases import BodyPart, Joint
 from pybullet_utils.bullet_client import BulletClient
 
+from bullet_control import core
 
-class Physics(p.Physics):
-    def _bind(self, bullet_client, bodies):
-        super()._bind(bullet_client, bodies)
+_LOG = logging.getLogger(__name__)
+
+SUITE = containers.TaggedTasks()
+
+
+@SUITE.add("benchmarking")
+def swingup(random=None):
+    """Create a Pendulum swingup task."""
+    bc = BulletClient(connection_mode=pybullet.DIRECT)
+    physics = Physics(bc)
+    # Create task.
+    task = SwingUp(random=random)
+    # Wrap into an environment.
+    env = core.Environment(physics, task)
+    return env
+
+
+def change_length(length=0.6):
+    """Create a Pendulum with different length for the pole."""
+
+    original = os.path.join(
+        pybullet_data.getDataPath(), "mjcf", "inverted_pendulum.xml"
+    )
+    tree = ET.parse(original)
+
+    for geom in tree.iter("geom"):
+        if geom.attrib.get("name") and geom.attrib["name"] == "cpole":
+            geom.set("fromto", "0 0 0 0.001 0 {}".format(length))
+
+    # Create Physics.
+    bc = BulletClient(connection_mode=pybullet.DIRECT)
+    physics = Physics(bc)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "output.xml")
+        tree.write(path)
+        physics.path = path  # TODO(yl): this is a hack
+
+    # Create task.
+    task = SwingUp()
+    # Wrap into an environment.
+    env = core.Environment(physics, task)
+    return env
+
+
+class Physics(core.Physics):
+    def __init__(self, bullet_client) -> None:
+        self.robot_name = "cart"
+        self.parts = {}
+        self.jdict = {}
+        self.ordered_joints = []
+        self.objects = None
+        self.robot_body = None
+
+        self._p = bullet_client
+        self.path = os.path.join(
+            pybullet_data.getDataPath(), "mjcf", "inverted_pendulum.xml"
+        )
+
+        self._ground_plane_mjcf = None
+
+    def step(self):
+        self._p.stepSimulation()
+
+    def close(self):
+        del self._p
+
+    def reset(self):
+        self._p.resetSimulation()
+        self._p.setPhysicsEngineParameter(deterministicOverlappingPairs=1)
+        self._load_plane()
+        self._load_MJCF(self.path)
+
+    def _load_plane(self):
+        bullet_client = self._p
+        filename = os.path.join(pybullet_data.getDataPath(), "plane_stadium.sdf")
+        self._ground_plane_mjcf = bullet_client.loadSDF(filename)
+        for i in self._ground_plane_mjcf:
+            bullet_client.changeDynamics(i, -1, lateralFriction=0.8, restitution=0.5)
+            bullet_client.changeVisualShape(i, -1, rgbaColor=[1, 1, 1, 0.8])
+            bullet_client.configureDebugVisualizer(
+                pybullet.COV_ENABLE_PLANAR_REFLECTION, 1
+            )
+
+    def _load_MJCF(self, xml_file):
+        self.robot_body = None
+
+        flags = (
+            pybullet.URDF_USE_SELF_COLLISION
+            | pybullet.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS
+            | pybullet.URDF_GOOGLEY_UNDEFINED_COLORS
+        )
+        self.objects = self._p.loadMJCF(xml_file, flags)
+        self._bind(self.objects)
+
+    def _bind(self, bodies):
+        """Bind objects and bullet physics client to physics instance."""
+        self.parts = {}
+        self.jdict = {}
+        self.ordered_joints = []
+        self.objects = None
+        self.robot_body = None
+
+        ordered_joints = self.ordered_joints
+        # streamline the case where bodies is actually just one body
+        if np.isscalar(bodies):
+            bodies = [bodies]
+
+        for i in range(len(bodies)):
+            if self._p.getNumJoints(bodies[i]) == 0:
+                part_name, robot_name = self._p.getBodyInfo(bodies[i])
+                self.robot_name = robot_name.decode("utf8")
+                part_name = part_name.decode("utf8")
+                self.parts[part_name] = BodyPart(self._p, part_name, bodies, i, -1)
+            for j in range(self._p.getNumJoints(bodies[i])):
+                self._p.setJointMotorControl2(
+                    bodies[i],
+                    j,
+                    pybullet.POSITION_CONTROL,
+                    positionGain=0.1,
+                    velocityGain=0.1,
+                    force=0,
+                )
+                jointInfo = self._p.getJointInfo(bodies[i], j)
+                joint_name = jointInfo[1]
+                part_name = jointInfo[12]
+
+                joint_name = joint_name.decode("utf8")
+                part_name = part_name.decode("utf8")
+
+                _LOG.debug("ROBOT PART '%s'", part_name)
+                _LOG.debug("ROBOT JOINT '%s'", joint_name)
+
+                self.parts[part_name] = BodyPart(self._p, part_name, bodies, i, j)
+
+                if part_name == self.robot_name:
+                    self.robot_body = self.parts[part_name]
+
+                if (
+                    i == 0 and j == 0 and self.robot_body is None
+                ):  # if nothing else works, we take this as robot_body
+                    self.parts[self.robot_name] = BodyPart(
+                        self._p, self.robot_name, bodies, 0, -1
+                    )
+                    self.robot_body = self.parts[self.robot_name]
+
+                if joint_name[:6] == "ignore":
+                    Joint(self._p, joint_name, bodies, i, j).disable_motor()
+                    continue
+
+                if joint_name[:8] != "jointfix":
+                    self.jdict[joint_name] = Joint(self._p, joint_name, bodies, i, j)
+                    ordered_joints.append(self.jdict[joint_name])
+
+                    self.jdict[joint_name].power_coef = 100.0
+
+                # TODO: Maybe we need this
+                # joints[joint_name].power_coef,
+                # joints[joint_name].max_velocity
+                # = joints[joint_name].limits()[2:4]
+                # self.ordered_joints.append(joints[joint_name])
+                # self.jdict[joint_name] = joints[joint_name]
+
+        # Bind the relevant parts of the physics object
         self.pole = self.parts["pole"]
         self.slider = self.jdict["slider"]
         self.j1 = self.jdict["hinge"]
 
+    # def reset_pose(self, position, orientation):
+    #     self.parts[self.robot_name].reset_pose(position, orientation)
 
-class PendulumTask(core.Task):
-    def __init__(self, swingup: bool, random=None):
+
+class SwingUp(core.Task):
+    """Pendulum swing-up task."""
+
+    def __init__(self, random=None):
         super().__init__(random=random)
-        self.swingup = swingup
+        self.swingup = True
         self._observation_shape = (5,)
         self._action_shape = ()
 
@@ -51,19 +218,19 @@ class PendulumTask(core.Task):
         assert np.isfinite(x)
 
         if not np.isfinite(x):
-            print("x is inf")
+            _LOG.warn("x is inf")
             x = 0
 
         if not np.isfinite(vx):
-            print("vx is inf")
+            _LOG.warn("vx is inf")
             vx = 0
 
         if not np.isfinite(theta):
-            print("theta is inf")
+            _LOG.warn("theta is inf")
             theta = 0
 
         if not np.isfinite(theta_dot):
-            print("theta_dot is inf")
+            _LOG.warn("theta_dot is inf")
             theta_dot = 0
 
         return np.array([x, vx, np.cos(theta), np.sin(theta), theta_dot])
@@ -80,43 +247,3 @@ class PendulumTask(core.Task):
         else:
             theta, _ = physics.j1.current_position()
             return np.abs(theta) > 0.2
-
-
-def swingup(random=None):
-    """Create a Pendulum swingup task."""
-    physics = Physics()
-    # Create task.
-    task = PendulumTask(swingup=True, random=random)
-    path = os.path.join(pybullet_data.getDataPath(), "mjcf", "inverted_pendulum.xml")
-    bc = BulletClient(connection_mode=pybullet.DIRECT)
-    physics.load_MJCF(path, "cart", bc)
-    # Wrap into an environment.
-    env = core.Environment(physics, task)
-    return env
-
-
-def change_length(length=0.6, swingup=True):
-    """Create a Pendulum with different length for the pole."""
-
-    original = os.path.join(
-        pybullet_data.getDataPath(), "mjcf", "inverted_pendulum.xml"
-    )
-    tree = ET.parse(original)
-
-    for geom in tree.iter("geom"):
-        if geom.attrib.get("name") and geom.attrib["name"] == "cpole":
-            geom.set("fromto", "0 0 0 0.001 0 {}".format(length))
-
-    # Create Physics.
-    physics = Physics()
-    bc = BulletClient(connection_mode=pybullet.DIRECT)
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "output.xml")
-        tree.write(path)
-        physics.load_MJCF(path, "cart", bc)
-
-    # Create task.
-    task = PendulumTask(swingup=swingup)
-    # Wrap into an environment.
-    env = core.Environment(physics, task)
-    return env
