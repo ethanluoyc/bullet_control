@@ -1,88 +1,112 @@
-import pybullet
-import gym, gym.spaces, gym.utils
+import logging
+import os
+
 import numpy as np
-import os, inspect
+import pybullet
 import pybullet_data
-from .core import BulletClient
+from pybullet_envs.robot_bases import BodyPart, Joint
+
+from bullet_control import core
+
+_LOG = logging.getLogger(__name__)
 
 
-class Physics(object):
-    def __init__(self, self_collision=True):
+class Camera:
+    def __init__(self, physics, width=64, height=64) -> None:
+
+        self.physics = physics
+        self.distance = 2
+        self.target_position = [0, 0, 0]
+        self.yaw = 0
+        self.pitch = 0
+        self.width = width
+        self.height = height
+        self.up_axis_index = 2
+        self.roll = 0
+
+    def render(self):
+        bullet_client = self.physics._p
+        view_matrix = bullet_client.computeViewMatrixFromYawPitchRoll(
+            self.target_position,
+            self.distance,
+            self.yaw,
+            self.pitch,
+            self.roll,
+            self.up_axis_index,
+        )
+
+        proj_matrix = bullet_client.computeProjectionMatrixFOV(
+            fov=60,
+            aspect=float(self.width) / self.height,
+            nearVal=0.1,
+            farVal=100.0,
+        )
+
+        img_arr = bullet_client.getCameraImage(
+            self.width,
+            self.height,
+            viewMatrix=view_matrix,
+            projectionMatrix=proj_matrix,
+        )
+        return img_arr[2]
+
+
+class Physics(core.Physics):
+    def __init__(self):
+        super().__init__()
         self.parts = {}
         self.jdict = {}
         self.ordered_joints = []
-        self._p = BulletClient(pybullet.GUI)
-        self.self_collision = self_collision
         self.objects = None
 
-    def _load_plane(self):
+        self.robot_name = None
+        self.robot_body = None
+
+        self._p = None
+        self.camera = Camera(self)
+
+    def load_plane(self, bullet_client):
         filename = os.path.join(pybullet_data.getDataPath(), "plane_stadium.sdf")
-        self.ground_plane_mjcf = self._p.loadSDF(filename)
-        # filename = os.path.join(pybullet_data.getDataPath(),"stadium_no_collision.sdf")
-        # self.ground_plane_mjcf = self._p.loadSDF(filename)
-        #
-        for i in self.ground_plane_mjcf:
-            self._p.changeDynamics(i, -1, lateralFriction=0.8, restitution=0.5)
-            self._p.changeVisualShape(i, -1, rgbaColor=[1, 1, 1, 0.8])
-            self._p.configureDebugVisualizer(pybullet.COV_ENABLE_PLANAR_REFLECTION, 1)
+        self._ground_plane_mjcf = bullet_client.loadSDF(filename)
+        for i in self._ground_plane_mjcf:
+            bullet_client.changeDynamics(i, -1, lateralFriction=0.8, restitution=0.5)
+            bullet_client.changeVisualShape(i, -1, rgbaColor=[1, 1, 1, 0.8])
+            bullet_client.configureDebugVisualizer(
+                pybullet.COV_ENABLE_PLANAR_REFLECTION, 1
+            )
 
-    def load_MJCF(self, xml):
-        self._load_plane()
-        xmlpath = os.path.join(pybullet_data.getDataPath(), "mjcf", xml)
-        if self.self_collision:
-            bodies = self._p.loadMJCF(
-                xmlpath,
-                flags=pybullet.URDF_USE_SELF_COLLISION
-                | pybullet.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS)
-        else:
-            bodies = self._p.loadMJCF(xmlpath)
-        self._bind(self._p, bodies)
+    def load_MJCF(self, xml_file, robot_name, bullet_client):
+        self.robot_name = robot_name
+        self.robot_body = None
 
-    def load_URDF(self, xml,
-                  basePosition=[0, 0, 0],
-                  baseOrientation=[0, 0, 0, 1],
-                  fixed_base=False):
-        xmlpath = os.path.join(pybullet_data.getDataPath(), xml)
-        if self.self_collision:
-            bodies = self._p.loadURDF(
-                xmlpath,
-                basePosition=basePosition,
-                baseOrientation=baseOrientation,
-                useFixedBase=fixed_base,
-                flags=pybullet.URDF_USE_SELF_COLLISION)
-        else:
-            bodies = self._p.loadURDF(
-                xmlpath,
-                basePosition=basePosition,
-                baseOrientation=baseOrientation,
-                useFixedBase=fixed_base)
-        self._bind(self._p, bodies)
-
-    def load_SDF(self, xml,
-                 basePosition=[0, 0, 0],
-                 baseOrientation=[0, 0, 0, 1],
-                 fixed_base=False):
-        bodies = self._p.loadSDF(os.path.join("models_robot", xml))
-        self._bind(self._p, bodies)
+        self.load_plane(bullet_client)
+        flags = (
+            pybullet.URDF_USE_SELF_COLLISION
+            | pybullet.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS
+            | pybullet.URDF_GOOGLEY_UNDEFINED_COLORS
+        )
+        self.objects = bullet_client.loadMJCF(xml_file, flags)
+        self._bind(bullet_client, self.objects)
 
     def _bind(self, bullet_client, bodies):
+        """Bind objects and bullet physics client to physics instance."""
+        assert self._p is None
         self._p = bullet_client
-        self.is_bound = True
-
-        if np.isscalar(bodies):  # streamline the case where bodies is actually just one body
-            bodies = [bodies]
 
         parts = self.parts
-        jdict = self.jdict
+
+        joints = self.jdict
         ordered_joints = self.ordered_joints
-        print(bodies)
+        # streamline the case where bodies is actually just one body
+        if np.isscalar(bodies):
+            bodies = [bodies]
+
         for i in range(len(bodies)):
             if self._p.getNumJoints(bodies[i]) == 0:
                 part_name, robot_name = self._p.getBodyInfo(bodies[i])
                 self.robot_name = robot_name.decode("utf8")
                 part_name = part_name.decode("utf8")
                 parts[part_name] = BodyPart(self._p, part_name, bodies, i, -1)
-
             for j in range(self._p.getNumJoints(bodies[i])):
                 self._p.setJointMotorControl2(
                     bodies[i],
@@ -90,7 +114,8 @@ class Physics(object):
                     pybullet.POSITION_CONTROL,
                     positionGain=0.1,
                     velocityGain=0.1,
-                    force=0)
+                    force=0,
+                )
                 jointInfo = self._p.getJointInfo(bodies[i], j)
                 joint_name = jointInfo[1]
                 part_name = jointInfo[12]
@@ -98,214 +123,43 @@ class Physics(object):
                 joint_name = joint_name.decode("utf8")
                 part_name = part_name.decode("utf8")
 
+                _LOG.debug("ROBOT PART '%s'", part_name)
+                _LOG.debug("ROBOT JOINT '%s'", joint_name)
+
                 parts[part_name] = BodyPart(self._p, part_name, bodies, i, j)
 
-                # TODO handle robot body
-                # if part_name == self.robot_name:
-                #     self.robot_body = parts[part_name]
-                # if i == 0 and j == 0 and self.robot_body is None:  # if nothing else works, we take this as robot_body
-                #     parts[self.robot_name] = BodyPart(self._p, self.robot_name,
-                #                                       bodies, 0, -1)
-                #     self.robot_body = parts[self.robot_name]
+                if part_name == self.robot_name:
+                    self.robot_body = parts[part_name]
+
+                if (
+                    i == 0 and j == 0 and self.robot_body is None
+                ):  # if nothing else works, we take this as robot_body
+                    parts[self.robot_name] = BodyPart(
+                        self._p, self.robot_name, bodies, 0, -1
+                    )
+                    self.robot_body = parts[self.robot_name]
 
                 if joint_name[:6] == "ignore":
                     Joint(self._p, joint_name, bodies, i, j).disable_motor()
                     continue
 
                 if joint_name[:8] != "jointfix":
-                    jdict[joint_name] = Joint(self._p, joint_name, bodies, i, j)
-                    ordered_joints.append(jdict[joint_name])
-                    jdict[joint_name].power_coef = 100.0
+                    joints[joint_name] = Joint(self._p, joint_name, bodies, i, j)
+                    ordered_joints.append(joints[joint_name])
+
+                    joints[joint_name].power_coef = 100.0
 
                 # TODO: Maybe we need this
-                # joints[joint_name].power_coef, joints[joint_name].max_velocity = joints[joint_name].limits()[2:4]
+                # joints[joint_name].power_coef,
+                # joints[joint_name].max_velocity
+                # = joints[joint_name].limits()[2:4]
                 # self.ordered_joints.append(joints[joint_name])
                 # self.jdict[joint_name] = joints[joint_name]
 
-        return parts, jdict, ordered_joints, # self.robot_body
+        return parts, joints, ordered_joints, self.robot_body
 
-    def reset_pose(self, position, orientation):
-        self.parts[self.robot_name].reset_pose(position, orientation)
+    # def reset_pose(self, position, orientation):
+    #     self.parts[self.robot_name].reset_pose(position, orientation)
 
-
-class PoseHelper:  # dummy class to comply to original interface
-    def __init__(self, body_part):
-        self.body_part = body_part
-
-    def xyz(self):
-        return self.body_part.current_position()
-
-    def rpy(self):
-        return pybullet.getEulerFromQuaternion(
-            self.body_part.current_orientation())
-
-    def orientation(self):
-        return self.body_part.current_orientation()
-
-
-class BodyPart:
-    def __init__(self, bullet_client, body_name, bodies, bodyIndex,
-                 bodyPartIndex):
-        self.bodies = bodies
-        self._p = bullet_client
-        self.bodyIndex = bodyIndex
-        self.bodyPartIndex = bodyPartIndex
-        self.initialPosition = self.current_position()
-        self.initialOrientation = self.current_orientation()
-        self.bp_pose = PoseHelper(self)
-
-    def state_fields_of_pose_of(
-            self, body_id, link_id=-1
-    ):  # a method you will most probably need a lot to get pose and orientation
-        if link_id == -1:
-            (x, y, z), (a, b, c,
-                        d) = self._p.getBasePositionAndOrientation(body_id)
-        else:
-            (x, y, z), (a, b, c, d), _, _, _, _ = self._p.getLinkState(
-                body_id, link_id)
-        return np.array([x, y, z, a, b, c, d])
-
-    def get_pose(self):
-        return self.state_fields_of_pose_of(self.bodies[self.bodyIndex],
-                                            self.bodyPartIndex)
-
-    def speed(self):
-        if self.bodyPartIndex == -1:
-            (vx, vy, vz), _ = self._p.getBaseVelocity(self.bodies[self.bodyIndex])
-        else:
-            (x, y, z),
-            (a, b, c, d), _, _, _, _,
-            (vx, vy, vz), (vr, vp, vy) = \
-                self._p.getLinkState(self.bodies[self.bodyIndex],
-                                     self.bodyPartIndex,
-                                     computeLinkVelocity=1)
-        return np.array([vx, vy, vz])
-
-    def current_position(self):
-        return self.get_pose()[:3]
-
-    def current_orientation(self):
-        return self.get_pose()[3:]
-
-    def get_orientation(self):
-        return self.current_orientation()
-
-    def reset_position(self, position):
-        self._p.resetBasePositionAndOrientation(
-            self.bodies[self.bodyIndex], position, self.get_orientation())
-
-    def reset_orientation(self, orientation):
-        self._p.resetBasePositionAndOrientation(self.bodies[self.bodyIndex],
-                                                self.get_position(),
-                                                orientation)
-
-    def reset_velocity(self,
-                       linearVelocity=[0, 0, 0],
-                       angularVelocity=[0, 0, 0]):
-        self._p.resetBaseVelocity(self.bodies[self.bodyIndex], linearVelocity,
-                                  angularVelocity)
-
-    def reset_pose(self, position, orientation):
-        self._p.resetBasePositionAndOrientation(self.bodies[self.bodyIndex],
-                                                position, orientation)
-
-    def pose(self):
-        return self.bp_pose
-
-    def contact_list(self):
-        return self._p.getContactPoints(self.bodies[self.bodyIndex], -1,
-                                        self.bodyPartIndex, -1)
-
-
-class Joint:
-    def __init__(self, bullet_client, joint_name, bodies, bodyIndex,
-                 jointIndex):
-        self.bodies = bodies
-        self._p = bullet_client
-        self.bodyIndex = bodyIndex
-        self.jointIndex = jointIndex
-        self.joint_name = joint_name
-
-        jointInfo = self._p.getJointInfo(self.bodies[self.bodyIndex],
-                                         self.jointIndex)
-        self.lowerLimit = jointInfo[8]
-        self.upperLimit = jointInfo[9]
-
-        self.power_coeff = 0
-
-    def set_state(self, x, vx):
-        self._p.resetJointState(self.bodies[self.bodyIndex], self.jointIndex,
-                                x, vx)
-
-    def current_position(self):  # just some synonyme method
-        return self.get_state()
-
-    def current_relative_position(self):
-        pos, vel = self.get_state()
-        pos_mid = 0.5 * (self.lowerLimit + self.upperLimit)
-        return (2 * (pos - pos_mid) / (self.upperLimit - self.lowerLimit),
-                0.1 * vel)
-
-    def get_state(self):
-        x, vx, _, _ = self._p.getJointState(self.bodies[self.bodyIndex],
-                                            self.jointIndex)
-        return x, vx
-
-    def get_position(self):
-        x, _ = self.get_state()
-        return x
-
-    def get_orientation(self):
-        _, r = self.get_state()
-        return r
-
-    def get_velocity(self):
-        _, vx = self.get_state()
-        return vx
-
-    def set_position(self, position):
-        self._p.setJointMotorControl2(
-            self.bodies[self.bodyIndex],
-            self.jointIndex,
-            pybullet.POSITION_CONTROL,
-            targetPosition=position)
-
-    def set_velocity(self, velocity):
-        self._p.setJointMotorControl2(
-            self.bodies[self.bodyIndex],
-            self.jointIndex,
-            pybullet.VELOCITY_CONTROL,
-            targetVelocity=velocity)
-
-    def set_motor_torque(self, torque):  # just some synonyme method
-        self.set_torque(torque)
-
-    def set_torque(self, torque):
-        self._p.setJointMotorControl2(
-            bodyIndex=self.bodies[self.bodyIndex],
-            jointIndex=self.jointIndex,
-            controlMode=pybullet.TORQUE_CONTROL,
-            force=torque)  #, positionGain=0.1, velocityGain=0.1)
-
-    def reset_current_position(self, position,
-                               velocity):  # just some synonyme method
-        self.reset_position(position, velocity)
-
-    def reset_position(self, position, velocity):
-        self._p.resetJointState(
-            self.bodies[self.bodyIndex],
-            self.jointIndex,
-            targetValue=position,
-            targetVelocity=velocity)
-        self.disable_motor()
-
-    def disable_motor(self):
-        self._p.setJointMotorControl2(
-            self.bodies[self.bodyIndex],
-            self.jointIndex,
-            controlMode=pybullet.POSITION_CONTROL,
-            targetPosition=0,
-            targetVelocity=0,
-            positionGain=0.1,
-            velocityGain=0.1,
-            force=0)
+    def render(self):
+        self.camera.render()

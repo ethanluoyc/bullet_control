@@ -1,63 +1,112 @@
-import functools
-import inspect
-import pybullet
+import abc
+
+import dm_env
+import numpy as np
+from dm_env import specs
 
 
-class BulletClient(object):
-    """A wrapper for pybullet to manage different clients."""
+class Physics:
+    def __init__(self):
+        self._p = None
 
-    def __init__(self, connection_mode=pybullet.DIRECT, options=""):
-        """Create a simulation and connect to it."""
-        self._client = pybullet.connect(pybullet.SHARED_MEMORY)
-        if (self._client < 0):
-            print("options=", options)
-            self._client = pybullet.connect(connection_mode, options=options)
+    def close(self):
+        del self._p
 
-    def __del__(self):
-        """Clean up connection if not already done."""
-        try:
-            pybullet.disconnect(physicsClientId=self._client)
-        except pybullet.error:
-            pass
-
-    def __getattr__(self, name):
-        """Inject the client id into Bullet functions."""
-        # TODO investigate if there are methods which do not tack physicsClientId
-        attribute = getattr(pybullet, name)
-        if inspect.isbuiltin(attribute):
-            attribute = functools.partial(
-                attribute, physicsClientId=self._client)
-        return attribute
+    def step(self):
+        self._p.stepSimulation()
 
 
-class Environment(object):
-    def __init__(self, physics, task):
+class Task(metaclass=abc.ABCMeta):
+    def __init__(self, random=None) -> None:
+        if not isinstance(random, np.random.RandomState):
+            random = np.random.RandomState(random)
+        self._random = random
+
+    @property
+    def random(self):
+        return self._random
+
+    @abc.abstractmethod
+    def initialize_episode(self, physics):
+        pass
+
+    @abc.abstractmethod
+    def before_step(self, action, physics: Physics) -> None:
+        pass
+
+    def after_step(self, physics: Physics) -> None:
+        pass
+
+    @abc.abstractmethod
+    def observation_spec(self, physics: Physics):
+        pass
+
+    @abc.abstractmethod
+    def reward_spec(self, physics: Physics):
+        pass
+
+    @abc.abstractmethod
+    def action_spec(self, physics: Physics):
+        pass
+
+    @abc.abstractmethod
+    def get_observation(self, physics: Physics):
+        pass
+
+    @abc.abstractmethod
+    def get_reward(self, physics: Physics):
+        pass
+
+    def get_termination(self, physics: Physics):
+        pass
+
+
+class Environment:
+    def __init__(self, physics: Physics, task: Task):
         self.physics = physics
         self.task = task
+        self._reset_next_step = True
 
-    def step(self, action):
-        self.task.step(action, self.physics)
-        self.physics._p.stepSimulation()
+    def reset(self) -> dm_env.TimeStep:
+        # self.physics._p.resetSimulation()
+        self._reset_next_step = False
+        self.physics._p.setPhysicsEngineParameter(deterministicOverlappingPairs=1)
+        self.task.initialize_episode(self.physics)
+        observation = self.task.get_observation(self.physics)
+        return dm_env.TimeStep(
+            dm_env.StepType.FIRST, reward=None, discount=None, observation=observation
+        )
 
-    def reset(self):
-        return self.task.on_reset(self.physics)
+    def step(self, action) -> dm_env.TimeStep:
+        if self._reset_next_step:
+            return self.reset()
+        self.task.before_step(action, self.physics)
+        self.physics.step()
+        self.task.after_step(self.physics)
+        reward = self.task.get_reward(self.physics)
+        observation = self.task.get_observation(self.physics)
+        # TODO handle terminal step
+        return dm_env.TimeStep(dm_env.StepType.MID, reward, 1.0, observation)
 
+    def observation_spec(self):
+        return self.task.observation_spec(self.physics)
 
-class Task(object):
-    """A task is a problem to be solved in a domain"""
+    def action_spec(self):
+        return self.task.action_spec(self.physics)
 
-    def on_reset(self, physics):
-        pass
+    def reward_spec(self):
+        return self.task.reward_spec(self.physics)
 
-    def get_observation(self, physics):
-        pass
+    def discount_spec(self):
+        return specs.Array((), np.float64)
 
-    def step(self, action, physics):
-        # TODO before step and after step?
-        pass
+    def close(self):
+        self.physics.close()
 
-    def get_reward(self, physics):
-        pass
+    def __enter__(self):
+        return self
 
-    def get_termination(self, physics):
-        pass
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Allows the environment to be used in a with-statement context."""
+        del exc_type, exc_value, traceback  # Unused.
+        self.close()

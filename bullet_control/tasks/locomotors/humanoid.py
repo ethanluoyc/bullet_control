@@ -9,7 +9,7 @@ from bullet_control.physics import BodyPart
 def run():
     ant = Humanoid()
     physics = Physics(ant.foot_list)
-    physics.load_MJCF('ant.xml')
+    physics.load_MJCF("ant.xml")
     return Environment(physics, ant)
 
 
@@ -18,8 +18,14 @@ class Humanoid(WalkerBase):
     foot_list = ["right_foot", "left_foot"]  # "left_hand", "right_hand"
 
     def __init__(self):
-        WalkerBase.__init__(self, 'humanoid_symmetric.xml', 'torso', action_dim=17, obs_dim=44,
-                            power=0.41)
+        WalkerBase.__init__(
+            self,
+            "humanoid_symmetric.xml",
+            "torso",
+            action_dim=17,
+            obs_dim=44,
+            power=0.41,
+        )
 
     # 17 joints, 4 of them important for walking (hip, knee), others may as well be turned off, 17/4 = 4.25
 
@@ -52,7 +58,11 @@ class Humanoid(WalkerBase):
                 orientation = [roll, pitch, yaw]
             else:
                 position = [0, 0, 1.4]
-                orientation = [0, 0, yaw]  # just face random direction, but stay straight otherwise
+                orientation = [
+                    0,
+                    0,
+                    yaw,
+                ]  # just face random direction, but stay straight otherwise
             self.robot_body.reset_position(position)
             self.robot_body.reset_orientation(orientation)
         self.initial_z = 0.8
@@ -61,17 +71,23 @@ class Humanoid(WalkerBase):
     random_lean = False
 
     def apply_action(self, a):
-        assert (np.isfinite(a).all())
+        assert np.isfinite(a).all()
         force_gain = 1
         for i, m, power in zip(range(17), self.motors, self.motor_power):
-            m.set_motor_torque(float(force_gain * power * self.power * np.clip(a[i], -1, +1)))
+            m.set_motor_torque(
+                float(force_gain * power * self.power * np.clip(a[i], -1, +1))
+            )
 
     def alive_bonus(self, z, pitch):
-        return +2 if z > 0.78 else -1  # 2 here because 17 joints produce a lot of electricity cost just from policy noise, living must be better than dying
+        return (
+            +2 if z > 0.78 else -1
+        )  # 2 here because 17 joints produce a lot of electricity cost just from policy noise, living must be better than dying
 
 
 def get_cube(_p, x, y, z):
-    body = _p.loadURDF(os.path.join(pybullet_data.getDataPath(), "cube_small.urdf"), [x, y, z])
+    body = _p.loadURDF(
+        os.path.join(pybullet_data.getDataPath(), "cube_small.urdf"), [x, y, z]
+    )
     _p.changeDynamics(body, -1, mass=1.2)  # match Roboschool
     part_name, _ = _p.getBodyInfo(body)
     part_name = part_name.decode("utf8")
@@ -80,8 +96,9 @@ def get_cube(_p, x, y, z):
 
 
 def get_sphere(_p, x, y, z):
-    body = _p.loadURDF(os.path.join(pybullet_data.getDataPath(), "sphere2red_nocol.urdf"),
-                       [x, y, z])
+    body = _p.loadURDF(
+        os.path.join(pybullet_data.getDataPath(), "sphere2red_nocol.urdf"), [x, y, z]
+    )
     part_name, _ = _p.getBodyInfo(body)
     part_name = part_name.decode("utf8")
     bodies = [body]
@@ -98,24 +115,29 @@ class HumanoidFlagrun(Humanoid):
         self.flag_reposition()
 
     def flag_reposition(self, physics):
-        self.walk_target_x = self.np_random.uniform(low=-self.scene.stadium_halflen,
-                                                    high=+self.scene.stadium_halflen)
-        self.walk_target_y = self.np_random.uniform(low=-self.scene.stadium_halfwidth,
-                                                    high=+self.scene.stadium_halfwidth)
+        self.walk_target_x = self.np_random.uniform(
+            low=-self.scene.stadium_halflen, high=+self.scene.stadium_halflen
+        )
+        self.walk_target_y = self.np_random.uniform(
+            low=-self.scene.stadium_halfwidth, high=+self.scene.stadium_halfwidth
+        )
         more_compact = 0.5  # set to 1.0 whole football field
         self.walk_target_x *= more_compact
         self.walk_target_y *= more_compact
 
-        if (self.flag):
+        if self.flag:
             # for b in self.flag.bodies:
-            #	print("remove body uid",b)
-            #	p.removeBody(b)
-            physics._p.resetBasePositionAndOrientation(self.flag.bodies[0],
-                                                       [self.walk_target_x, self.walk_target_y,
-                                                        0.7],
-                                                       [0, 0, 0, 1])
+            # 	print("remove body uid",b)
+            # 	p.removeBody(b)
+            physics._p.resetBasePositionAndOrientation(
+                self.flag.bodies[0],
+                [self.walk_target_x, self.walk_target_y, 0.7],
+                [0, 0, 0, 1],
+            )
         else:
-            self.flag = get_sphere(physics._p, self.walk_target_x, self.walk_target_y, 0.7)
+            self.flag = get_sphere(
+                physics._p, self.walk_target_x, self.walk_target_y, 0.7
+            )
         self.flag_timeout = 600 / self.scene.frame_skip  # match Roboschool
 
     def calc_state(self):
@@ -123,7 +145,9 @@ class HumanoidFlagrun(Humanoid):
         state = Humanoid.calc_state(self)
         if self.walk_target_dist < 1 or self.flag_timeout <= 0:
             self.flag_reposition()
-            state = Humanoid.calc_state(self)  # caclulate state again, against new flag pos
+            state = Humanoid.calc_state(
+                self
+            )  # caclulate state again, against new flag pos
             self.potential = self.calc_potential()  # avoid reward jump
         return state
 
@@ -139,10 +163,10 @@ class HumanoidFlagrunHarder(HumanoidFlagrun):
         HumanoidFlagrun.on_reset(self, physics)
 
         self.frame = 0
-        if (self.aggressive_cube):
-            physics._p.resetBasePositionAndOrientation(self.aggressive_cube.bodies[0],
-                                                       [-1.5, 0, 0.05],
-                                                       [0, 0, 0, 1])
+        if self.aggressive_cube:
+            physics._p.resetBasePositionAndOrientation(
+                self.aggressive_cube.bodies[0], [-1.5, 0, 0.05], [0, 0, 0, 1]
+            )
         else:
             self.aggressive_cube = get_cube(self._p, -1.5, 0, 0.05)
         self.on_ground_frame_counter = 0
@@ -151,21 +175,32 @@ class HumanoidFlagrunHarder(HumanoidFlagrun):
         self.initial_z = 0.8
 
     def alive_bonus(self, z, pitch):
-        if self.frame % 30 == 0 and self.frame > 100 and self.on_ground_frame_counter == 0:
+        if (
+            self.frame % 30 == 0
+            and self.frame > 100
+            and self.on_ground_frame_counter == 0
+        ):
             target_xyz = np.array(self.body_xyz)
             robot_speed = np.array(self.robot_body.speed())
             angle = self.np_random.uniform(low=-3.14, high=3.14)
             from_dist = 4.0
-            attack_speed = self.np_random.uniform(low=20.0,
-                                                  high=30.0)  # speed 20..30 (* mass in cube.urdf = impulse)
+            attack_speed = self.np_random.uniform(
+                low=20.0, high=30.0
+            )  # speed 20..30 (* mass in cube.urdf = impulse)
             time_to_travel = from_dist / attack_speed
-            target_xyz += robot_speed * time_to_travel  # predict future position at the moment the cube hits the robot
-            position = [target_xyz[0] + from_dist * np.cos(angle),
-                        target_xyz[1] + from_dist * np.sin(angle),
-                        target_xyz[2] + 1.0]
+            target_xyz += (
+                robot_speed * time_to_travel
+            )  # predict future position at the moment the cube hits the robot
+            position = [
+                target_xyz[0] + from_dist * np.cos(angle),
+                target_xyz[1] + from_dist * np.sin(angle),
+                target_xyz[2] + 1.0,
+            ]
             attack_speed_vector = target_xyz - np.array(position)
             attack_speed_vector *= attack_speed / np.linalg.norm(attack_speed_vector)
-            attack_speed_vector += self.np_random.uniform(low=-1.0, high=+1.0, size=(3,))
+            attack_speed_vector += self.np_random.uniform(
+                low=-1.0, high=+1.0, size=(3,)
+            )
             self.aggressive_cube.reset_position(position)
             self.aggressive_cube.reset_velocity(linearVelocity=attack_speed_vector)
         if z < 0.8:
@@ -194,9 +229,13 @@ class HumanoidFlagrunHarder(HumanoidFlagrun):
         # This disables crawl.
         if self.body_xyz[2] < 0.8:
             if self.crawl_start_potential is None:
-                self.crawl_start_potential = flag_running_progress - self.crawl_ignored_potential
+                self.crawl_start_potential = (
+                    flag_running_progress - self.crawl_ignored_potential
+                )
             # print("CRAWL START %+0.1f %+0.1f" % (self.crawl_start_potential, flag_running_progress))
-            self.crawl_ignored_potential = flag_running_progress - self.crawl_start_potential
+            self.crawl_ignored_potential = (
+                flag_running_progress - self.crawl_start_potential
+            )
             flag_running_progress = self.crawl_start_potential
         else:
             # print("CRAWL STOP %+0.1f %+0.1f" % (self.crawl_ignored_potential, flag_running_progress))
@@ -205,7 +244,8 @@ class HumanoidFlagrunHarder(HumanoidFlagrun):
 
         return flag_running_progress + self.potential_leak() * 100
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     env = run()
 
     while True:

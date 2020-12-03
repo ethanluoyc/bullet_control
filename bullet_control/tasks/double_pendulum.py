@@ -14,12 +14,11 @@ class Physics(physics.Physics):
 
 class DoublePendulum(core.Task):
     def step(self, action, physics):
-        assert (np.isfinite(action).all())
-        physics.slider.set_motor_torque(
-            200 * float(np.clip(action[0], -1, +1)))
+        assert np.isfinite(action).all()
+        physics.slider.set_motor_torque(200 * float(np.clip(action[0], -1, +1)))
 
     def on_reset(self, physics):
-        u = np.random.uniform(low=-.1, high=.1, size=[2])
+        u = np.random.uniform(low=-0.1, high=0.1, size=[2])
         physics.j1.reset_current_position(float(u[0]), 0)
         physics.j2.reset_current_position(float(u[1]), 0)
         physics.j1.set_motor_torque(0)
@@ -36,18 +35,20 @@ class DoublePendulum(core.Task):
         gamma, gamma_dot = physics.j2.current_position()
         x, vx = physics.slider.current_position()
         pos_x, _, _ = physics.pole2.pose().xyz()
-        assert (np.isfinite(x))
-        return np.array([
-            x,
-            vx,
-            pos_x,
-            np.cos(theta),
-            np.sin(theta),
-            theta_dot,
-            np.cos(gamma),
-            np.sin(gamma),
-            gamma_dot,
-        ])
+        assert np.isfinite(x)
+        return np.array(
+            [
+                x,
+                vx,
+                pos_x,
+                np.cos(theta),
+                np.sin(theta),
+                theta_dot,
+                np.cos(gamma),
+                np.sin(gamma),
+                gamma_dot,
+            ]
+        )
 
     def get_reward(self, physics):
         pass

@@ -1,6 +1,7 @@
 import numpy as np
 from pybullet_envs.robot_bases import MJCFBasedRobot
 
+
 class Pusher(MJCFBasedRobot):
     min_target_placement_radius = 0.5
     max_target_placement_radius = 0.8
@@ -8,7 +9,7 @@ class Pusher(MJCFBasedRobot):
     max_object_to_target_distance = 0.4
 
     def __init__(self):
-        MJCFBasedRobot.__init__(self, 'pusher.xml', 'body0', action_dim=7, obs_dim=55)
+        MJCFBasedRobot.__init__(self, "pusher.xml", "body0", action_dim=7, obs_dim=55)
 
     def robot_specific_reset(self, bullet_client):
         # parts
@@ -25,53 +26,82 @@ class Pusher(MJCFBasedRobot):
         self.wrist_flex_joint = self.jdict["wrist_flex_joint"]
         self.wrist_roll_joint = self.jdict["wrist_roll_joint"]
 
-        self.target_pos = np.concatenate([
-            self.np_random.uniform(low=-1, high=1, size=1),
-            self.np_random.uniform(low=-1, high=1, size=1)
-        ])
+        self.target_pos = np.concatenate(
+            [
+                self.np_random.uniform(low=-1, high=1, size=1),
+                self.np_random.uniform(low=-1, high=1, size=1),
+            ]
+        )
 
         # make length of vector between min and max_target_placement_radius
-        self.target_pos = self.target_pos \
-                          / np.linalg.norm(self.target_pos) \
-                          * self.np_random.uniform(low=self.min_target_placement_radius,
-                                                   high=self.max_target_placement_radius, size=1)
+        self.target_pos = (
+            self.target_pos
+            / np.linalg.norm(self.target_pos)
+            * self.np_random.uniform(
+                low=self.min_target_placement_radius,
+                high=self.max_target_placement_radius,
+                size=1,
+            )
+        )
 
-        self.object_pos = np.concatenate([
-            self.np_random.uniform(low=-1, high=1, size=1),
-            self.np_random.uniform(low=-1, high=1, size=1)
-        ])
+        self.object_pos = np.concatenate(
+            [
+                self.np_random.uniform(low=-1, high=1, size=1),
+                self.np_random.uniform(low=-1, high=1, size=1),
+            ]
+        )
 
         # make length of vector between min and max_object_to_target_distance
-        self.object_pos = self.object_pos \
-                          / np.linalg.norm(self.object_pos - self.target_pos) \
-                          * self.np_random.uniform(low=self.min_object_to_target_distance,
-                                                   high=self.max_object_to_target_distance, size=1)
+        self.object_pos = (
+            self.object_pos
+            / np.linalg.norm(self.object_pos - self.target_pos)
+            * self.np_random.uniform(
+                low=self.min_object_to_target_distance,
+                high=self.max_object_to_target_distance,
+                size=1,
+            )
+        )
 
         # set position of objects
         self.zero_offset = np.array([0.45, 0.55])
-        self.jdict["target_x"].reset_current_position(self.target_pos[0] - self.zero_offset[0], 0)
-        self.jdict["target_y"].reset_current_position(self.target_pos[1] - self.zero_offset[1], 0)
-        self.jdict["object_x"].reset_current_position(self.object_pos[0] - self.zero_offset[0], 0)
-        self.jdict["object_y"].reset_current_position(self.object_pos[1] - self.zero_offset[1], 0)
+        self.jdict["target_x"].reset_current_position(
+            self.target_pos[0] - self.zero_offset[0], 0
+        )
+        self.jdict["target_y"].reset_current_position(
+            self.target_pos[1] - self.zero_offset[1], 0
+        )
+        self.jdict["object_x"].reset_current_position(
+            self.object_pos[0] - self.zero_offset[0], 0
+        )
+        self.jdict["object_y"].reset_current_position(
+            self.object_pos[1] - self.zero_offset[1], 0
+        )
 
         # randomize all joints TODO: Will this work or do we have to constrain this resetting in some way?
-        self.shoulder_pan_joint.reset_current_position(self.np_random.uniform(low=-3.14, high=3.14),
-                                                       0)
+        self.shoulder_pan_joint.reset_current_position(
+            self.np_random.uniform(low=-3.14, high=3.14), 0
+        )
         self.shoulder_lift_joint.reset_current_position(
-            self.np_random.uniform(low=-3.14, high=3.14), 0)
+            self.np_random.uniform(low=-3.14, high=3.14), 0
+        )
         self.upper_arm_roll_joint.reset_current_position(
-            self.np_random.uniform(low=-3.14, high=3.14), 0)
-        self.elbow_flex_joint.reset_current_position(self.np_random.uniform(low=-3.14, high=3.14),
-                                                     0)
-        self.forearm_roll_joint.reset_current_position(self.np_random.uniform(low=-3.14, high=3.14),
-                                                       0)
-        self.wrist_flex_joint.reset_current_position(self.np_random.uniform(low=-3.14, high=3.14),
-                                                     0)
-        self.wrist_roll_joint.reset_current_position(self.np_random.uniform(low=-3.14, high=3.14),
-                                                     0)
+            self.np_random.uniform(low=-3.14, high=3.14), 0
+        )
+        self.elbow_flex_joint.reset_current_position(
+            self.np_random.uniform(low=-3.14, high=3.14), 0
+        )
+        self.forearm_roll_joint.reset_current_position(
+            self.np_random.uniform(low=-3.14, high=3.14), 0
+        )
+        self.wrist_flex_joint.reset_current_position(
+            self.np_random.uniform(low=-3.14, high=3.14), 0
+        )
+        self.wrist_roll_joint.reset_current_position(
+            self.np_random.uniform(low=-3.14, high=3.14), 0
+        )
 
     def apply_action(self, a):
-        assert (np.isfinite(a).all())
+        assert np.isfinite(a).all()
         self.shoulder_pan_joint.set_motor_torque(0.05 * float(np.clip(a[0], -1, +1)))
         self.shoulder_lift_joint.set_motor_torque(0.05 * float(np.clip(a[1], -1, +1)))
         self.upper_arm_roll_joint.set_motor_torque(0.05 * float(np.clip(a[2], -1, +1)))
@@ -82,14 +112,17 @@ class Pusher(MJCFBasedRobot):
 
     def calc_state(self):
         self.to_target_vec = self.target_pos - self.object_pos
-        return np.concatenate([
-            np.array([j.current_position() for j in self.ordered_joints]).flatten(),
-            # all positions
-            np.array([j.current_relative_position() for j in self.ordered_joints]).flatten(),
-            # all speeds
-            self.to_target_vec,
-            self.fingertip.pose().xyz(),
-            self.object.pose().xyz(),
-            self.target.pose().xyz(),
-        ])
-
+        return np.concatenate(
+            [
+                np.array([j.current_position() for j in self.ordered_joints]).flatten(),
+                # all positions
+                np.array(
+                    [j.current_relative_position() for j in self.ordered_joints]
+                ).flatten(),
+                # all speeds
+                self.to_target_vec,
+                self.fingertip.pose().xyz(),
+                self.object.pose().xyz(),
+                self.target.pose().xyz(),
+            ]
+        )
