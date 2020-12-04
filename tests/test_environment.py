@@ -1,8 +1,9 @@
 import dm_env
 import numpy as np
 from absl.testing import absltest, parameterized
-from bullet_control.tasks import pendulum
 from dm_env import test_utils
+
+from bullet_control.tasks import pendulum
 
 
 def uniform_random_policy(action_spec, random=None):

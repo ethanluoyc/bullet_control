@@ -77,8 +77,13 @@ class Environment:
         self.task.after_step(self.physics)
         reward = self.task.get_reward(self.physics)
         observation = self.task.get_observation(self.physics)
-        # TODO handle terminal step
-        return dm_env.TimeStep(dm_env.StepType.MID, reward, 1.0, observation)
+        discount = self.task.get_termination(self.physics)
+        episdoe_over = discount is not None
+        if episdoe_over:
+            self._reset_next_step = True
+            return dm_env.TimeStep(dm_env.StepType.LAST, reward, discount, observation)
+        else:
+            return dm_env.TimeStep(dm_env.StepType.MID, reward, 1.0, observation)
 
     def observation_spec(self):
         return self.task.observation_spec(self.physics)
@@ -90,10 +95,13 @@ class Environment:
         return self.task.reward_spec(self.physics)
 
     def discount_spec(self):
-        return specs.Array((), np.float64)
+        return specs.Array((), np.float64, name="discount")
 
     def close(self):
         self.physics.close()
+
+    def render(self):
+        return self.physics.render()
 
     def __enter__(self):
         return self

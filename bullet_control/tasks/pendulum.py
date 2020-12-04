@@ -11,18 +11,27 @@ from dm_env import specs
 from pybullet_envs.robot_bases import BodyPart, Joint
 from pybullet_utils.bullet_client import BulletClient
 
-from bullet_control import core
+from bullet_control import camera, core
 
 _LOG = logging.getLogger(__name__)
 
 SUITE = containers.TaggedTasks()
 
+PLANE_FILE = os.path.join(pybullet_data.getDataPath(), "plane_stadium.sdf")
+MODEL_FILE = os.path.join(pybullet_data.getDataPath(), "mjcf", "inverted_pendulum.xml")
+
+
+def _create_bullet_client():
+    return BulletClient(connection_mode=pybullet.DIRECT)
+
 
 @SUITE.add("benchmarking")
 def swingup(random=None):
     """Create a Pendulum swingup task."""
-    bc = BulletClient(connection_mode=pybullet.DIRECT)
-    physics = Physics(bc)
+    bc = _create_bullet_client()
+    with open(MODEL_FILE, "rt") as infile:
+        model_xml_string = infile.read()
+    physics = Physics(bc, model_xml_string)
     # Create task.
     task = SwingUp(random=random)
     # Wrap into an environment.
@@ -33,23 +42,18 @@ def swingup(random=None):
 def change_length(length=0.6):
     """Create a Pendulum with different length for the pole."""
 
-    original = os.path.join(
-        pybullet_data.getDataPath(), "mjcf", "inverted_pendulum.xml"
-    )
+    # TODO(yl): use the MJCF editor from dm_env to perform modifications.
+    original = MODEL_FILE
     tree = ET.parse(original)
 
     for geom in tree.iter("geom"):
         if geom.attrib.get("name") and geom.attrib["name"] == "cpole":
             geom.set("fromto", "0 0 0 0.001 0 {}".format(length))
+    modified_xml_string = ET.tostring(tree.getroot(), encoding="unicode", method="xml")
 
     # Create Physics.
-    bc = BulletClient(connection_mode=pybullet.DIRECT)
-    physics = Physics(bc)
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "output.xml")
-        tree.write(path)
-        physics.path = path  # TODO(yl): this is a hack
-
+    bc = _create_bullet_client()
+    physics = Physics(bc, modified_xml_string)
     # Create task.
     task = SwingUp()
     # Wrap into an environment.
@@ -58,7 +62,11 @@ def change_length(length=0.6):
 
 
 class Physics(core.Physics):
-    def __init__(self, bullet_client) -> None:
+    """Wrapper around PyBullet physics engine.
+    TODO(yl): move shared methods to the base class so that other tasks can reuse.
+    """
+
+    def __init__(self, bullet_client: BulletClient, model_xml_string: str) -> None:
         self.robot_name = "cart"
         self.parts = {}
         self.jdict = {}
@@ -67,11 +75,9 @@ class Physics(core.Physics):
         self.robot_body = None
 
         self._p = bullet_client
-        self.path = os.path.join(
-            pybullet_data.getDataPath(), "mjcf", "inverted_pendulum.xml"
-        )
-
+        self._model_xml_string = model_xml_string
         self._ground_plane_mjcf = None
+        self._camera = camera.Camera(self)
 
     def step(self):
         self._p.stepSimulation()
@@ -83,12 +89,14 @@ class Physics(core.Physics):
         self._p.resetSimulation()
         self._p.setPhysicsEngineParameter(deterministicOverlappingPairs=1)
         self._load_plane()
-        self._load_MJCF(self.path)
+        self._load_MJCF()
+
+    def render(self):
+        return self._camera.render()
 
     def _load_plane(self):
         bullet_client = self._p
-        filename = os.path.join(pybullet_data.getDataPath(), "plane_stadium.sdf")
-        self._ground_plane_mjcf = bullet_client.loadSDF(filename)
+        self._ground_plane_mjcf = bullet_client.loadSDF(PLANE_FILE)
         for i in self._ground_plane_mjcf:
             bullet_client.changeDynamics(i, -1, lateralFriction=0.8, restitution=0.5)
             bullet_client.changeVisualShape(i, -1, rgbaColor=[1, 1, 1, 0.8])
@@ -96,7 +104,7 @@ class Physics(core.Physics):
                 pybullet.COV_ENABLE_PLANAR_REFLECTION, 1
             )
 
-    def _load_MJCF(self, xml_file):
+    def _load_MJCF(self):
         self.robot_body = None
 
         flags = (
@@ -104,7 +112,10 @@ class Physics(core.Physics):
             | pybullet.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS
             | pybullet.URDF_GOOGLEY_UNDEFINED_COLORS
         )
-        self.objects = self._p.loadMJCF(xml_file, flags)
+        with tempfile.NamedTemporaryFile("wt") as tmpf:
+            tmpf.write(self._model_xml_string)
+            tmpf.flush()
+            self.objects = self._p.loadMJCF(tmpf.name, flags)
         self._bind(self.objects)
 
     def _bind(self, bodies):
@@ -191,7 +202,7 @@ class SwingUp(core.Task):
         super().__init__(random=random)
         self.swingup = True
         self._observation_shape = (5,)
-        self._action_shape = ()
+        self._action_shape = (1,)
 
     def initialize_episode(self, physics):
         u = self.random.uniform(low=-0.1, high=0.1)
@@ -200,17 +211,20 @@ class SwingUp(core.Task):
         return self.get_observation(physics)
 
     def before_step(self, action, physics):
+        action = np.asscalar(action)
         assert np.isfinite(action)
         physics.slider.set_motor_torque(100 * np.clip(action, -1, +1))
 
     def observation_spec(self, physics):
-        return specs.Array(self._observation_shape, np.float64)
+        return specs.Array(self._observation_shape, np.float32, name="observation")
 
     def action_spec(self, physics):
-        return specs.BoundedArray(self._action_shape, np.float64, -1.0, +1.0)
+        return specs.BoundedArray(
+            self._action_shape, np.float32, -1.0, +1.0, name="action"
+        )
 
     def reward_spec(self, physics):
-        return specs.Array((), np.float64)
+        return specs.Array((), np.float64, name="reward")
 
     def get_observation(self, physics):
         theta, theta_dot = physics.j1.current_position()
@@ -233,7 +247,9 @@ class SwingUp(core.Task):
             _LOG.warn("theta_dot is inf")
             theta_dot = 0
 
-        return np.array([x, vx, np.cos(theta), np.sin(theta), theta_dot])
+        return np.array(
+            [x, vx, np.cos(theta), np.sin(theta), theta_dot], dtype=np.float32
+        )
 
     def get_reward(self, physics):
         if self.swingup:
