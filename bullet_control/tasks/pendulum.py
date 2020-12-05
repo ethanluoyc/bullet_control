@@ -39,7 +39,7 @@ def swingup(random=None):
     return env
 
 
-def change_length(length=0.6):
+def change_length(length=0.6, random=None):
     """Create a Pendulum with different length for the pole."""
 
     # TODO(yl): use the MJCF editor from dm_env to perform modifications.
@@ -55,7 +55,7 @@ def change_length(length=0.6):
     bc = _create_bullet_client()
     physics = Physics(bc, modified_xml_string)
     # Create task.
-    task = SwingUp()
+    task = SwingUp(random=random)
     # Wrap into an environment.
     env = core.Environment(physics, task)
     return env
